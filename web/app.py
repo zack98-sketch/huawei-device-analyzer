@@ -44,8 +44,14 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from huawei_analyzer.checker import ComplianceChecker  # noqa: E402
 from huawei_analyzer.detector import detect_file_type  # noqa: E402
-from huawei_analyzer.parsers import FirewallParser, LogParser, SwitchParser  # noqa: E402
+from huawei_analyzer.parsers import (  # noqa: E402
+    FirewallParser,
+    LogParser,
+    SwitchParser,
+    TrafficLogParser,
+)
 from huawei_analyzer.reporter import ReportGenerator  # noqa: E402
+from huawei_analyzer.traffic_analyzer import TrafficAnalyzer  # noqa: E402
 
 # Where uploaded files and generated reports for a job are stored.
 JOBS_DIR = Path(
@@ -65,6 +71,7 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 _reporter = ReportGenerator()
 _checker = ComplianceChecker()
+_traffic_analyzer = TrafficAnalyzer()
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +127,6 @@ def api_analyze():
                     "hostname": "-",
                     "score": None,
                     "summary": None,
-                    "error": f"不支持的扩展名 {ext} (允许: {', '.join(sorted(ALLOWED_EXTS))})",
                     "has_txt": False,
                     "has_html": False,
                 }
@@ -134,11 +140,10 @@ def api_analyze():
 
     # Generate per-file reports.
     for i, res in enumerate(results):
-        if res["device_type"] in ("firewall", "switch", "log"):
+        if res["device_type"] in ("firewall", "switch", "log", "traffic_log"):
             stem = f"{i:03d}_{_safe_name(Path(res['name']).stem)}"
             txt_path = job_dir / f"{stem}.txt"
             html_path = job_dir / f"{stem}.html"
-            # Build a minimal result dict matching what reporter expects.
             txt_path.write_text(
                 _reporter.render_device_text(_to_report_input(res)),
                 encoding="utf-8",
@@ -153,7 +158,10 @@ def api_analyze():
 
     # Batch summary (when more than one analyzable file).
     batch_stem = None
-    analyzable = [r for r in results if r["device_type"] in ("firewall", "switch", "log")]
+    analyzable = [
+        r for r in results
+        if r["device_type"] in ("firewall", "switch", "log", "traffic_log")
+    ]
     if len(analyzable) > 1:
         batch_stem = "batch_summary"
         (job_dir / f"{batch_stem}.txt").write_text(
@@ -194,7 +202,6 @@ def api_report(job, stem, fmt):
     if not path.is_file():
         return ("Not found", 404)
     if fmt == "html":
-        # Inline render: send with text/html so the browser shows it.
         return send_from_directory(path.parent, path.name, mimetype="text/html")
     return send_file(path, as_attachment=True, download_name=f"{stem}.{fmt}")
 
@@ -233,6 +240,7 @@ def _analyze_one(path: Path, log_start, log_end, idx: int) -> dict[str, Any]:
         res["_config"] = cfg
         res["_compliance"] = comp
         res["_log"] = None
+        res["_traffic"] = None
     elif file_type == "switch":
         cfg = SwitchParser().parse(content)
         comp = _checker.check(cfg)
@@ -242,6 +250,7 @@ def _analyze_one(path: Path, log_start, log_end, idx: int) -> dict[str, Any]:
         res["_config"] = cfg
         res["_compliance"] = comp
         res["_log"] = None
+        res["_traffic"] = None
     elif file_type == "log":
         log = LogParser().parse(content, start_time=log_start, end_time=log_end)
         res["hostname"] = next(
@@ -256,15 +265,35 @@ def _analyze_one(path: Path, log_start, log_end, idx: int) -> dict[str, Any]:
         res["_config"] = None
         res["_compliance"] = None
         res["_log"] = log
+        res["_traffic"] = None
+    elif file_type == "traffic_log":
+        traffic_raw = TrafficLogParser().parse(
+            content, start_time=log_start, end_time=log_end
+        )
+        traffic = _traffic_analyzer.analyze(traffic_raw)
+        res["hostname"] = Path(res["name"]).stem
+        ob = traffic.get("outbound", {})
+        ib = traffic.get("inbound", {})
+        res["summary"] = {
+            "total_sessions": traffic.get("total_sessions", 0),
+            "outbound": ob.get("total", 0),
+            "inbound": ib.get("total", 0),
+            "time_range": traffic.get("time_range", {}),
+        }
+        res["_config"] = None
+        res["_compliance"] = None
+        res["_log"] = None
+        res["_traffic"] = traffic
     else:
         res["device_type"] = "unknown"
         res["error"] = (
-            "无法识别文件类型 (非华为防火墙/交换机配置或 VRP 日志)。"
+            "无法识别文件类型 (非华为防火墙/交换机配置、VRP 日志或会话表 CSV)。"
             "如为交换机配置，建议提供 .txt 纯文本格式。"
         )
         res["_config"] = None
         res["_compliance"] = None
         res["_log"] = None
+        res["_traffic"] = None
     return res
 
 
@@ -276,6 +305,7 @@ def _to_report_input(res: dict[str, Any]) -> dict[str, Any]:
         "hostname": res.get("hostname", "-"),
         "config": res.get("_config"),
         "log": res.get("_log"),
+        "traffic": res.get("_traffic"),
         "compliance": res.get("_compliance"),
     }
 
@@ -288,6 +318,9 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
     score_sum = 0
     total_events = 0
     total_critical = 0
+    total_sessions = 0
+    total_outbound = 0
+    total_inbound = 0
     for r in results:
         by_type[r["device_type"]] = by_type.get(r["device_type"], 0) + 1
         s = r.get("summary") or {}
@@ -302,6 +335,10 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         elif r["device_type"] == "log":
             total_events += s.get("total_events", 0)
             total_critical += s.get("critical", 0)
+        elif r["device_type"] == "traffic_log":
+            total_sessions += s.get("total_sessions", 0)
+            total_outbound += s.get("outbound", 0)
+            total_inbound += s.get("inbound", 0)
     return {
         "file_count": len(results),
         "by_type": by_type,
@@ -310,6 +347,9 @@ def _aggregate(results: list[dict[str, Any]]) -> dict[str, Any]:
         "total_missing": total_missing,
         "total_log_events": total_events,
         "total_critical_events": total_critical,
+        "total_traffic_sessions": total_sessions,
+        "total_outbound": total_outbound,
+        "total_inbound": total_inbound,
     }
 
 
@@ -327,6 +367,7 @@ def _err_result(name: str, error: str) -> dict[str, Any]:
         "_config": None,
         "_compliance": None,
         "_log": None,
+        "_traffic": None,
     }
 
 
@@ -345,7 +386,6 @@ def _cleanup_old_jobs() -> None:
         entries = [p for p in JOBS_DIR.iterdir() if p.is_dir()]
         entries.sort(key=lambda p: p.stat().st_mtime)
         for p in entries[:-MAX_KEPT_JOBS]:
-            # Be conservative: only delete directories that look like job ids.
             if _is_safe_token(p.name):
                 shutil.rmtree(p, ignore_errors=True)
     except OSError:
@@ -365,8 +405,6 @@ def _gc_old_jobs():
 
 
 if __name__ == "__main__":
-    # Development server. For production use a real WSGI server (gunicorn /
-    # waitress) - see DEPLOYMENT.md.
     port = int(os.environ.get("PORT", "5000"))
     host = os.environ.get("HOST", "127.0.0.1")
     app.run(host=host, port=port, debug=False)

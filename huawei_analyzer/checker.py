@@ -1,17 +1,22 @@
 """Security compliance checker for parsed Huawei device configurations.
 
-Performs four classes of checks:
+Performs five classes of checks:
 
 1. Weak password / authentication policy
-   - plaintext (`simple`) passwords, telnet enabled for mgmt, excessive privilege.
+   - plaintext (`simple`) passwords, telnet enabled for mgmt, excessive privilege,
+     weak/default password tokens on simple-type passwords only.
 2. High-risk open ports/services
    - telnet (23), ftp (21), http (80), smb (445), rdp (3389) exposed.
 3. Overly permissive ACLs / security policies
    - `permit ip` with no source/destination restriction, `permit any` rules,
-     firewall security-policy `permit` without address constraints.
+     firewall security-policy `permit` without address constraints,
+     any-zone-to-any-zone `permit` (any-any policy).
 4. Missing critical security configuration
    - no ACL configured, ACL not applied, STP disabled / bpdu-protection off,
      no log auditing, no default route, no security-policy / zones on firewall.
+5. Operational security posture (firewall-specific)
+   - firewall log source disabled, NTP disabled, NAT server exposure,
+   management services on data-plane interfaces, default route 0.0.0.0/0.
 """
 
 from __future__ import annotations
@@ -32,6 +37,8 @@ HIGH_RISK_SERVICES = {
 }
 
 # Common default / weak password strings used by Huawei devices historically.
+# These are checked only against ``simple``-type (plaintext) passwords, never
+# against ``cipher`` values which are encrypted and would be false positives.
 WEAK_PASSWORD_TOKENS = (
     "admin@123",
     "admin123",
@@ -43,12 +50,6 @@ WEAK_PASSWORD_TOKENS = (
     "Admin123",
     "Admin@huawei",
     "Password@123",
-)
-
-# An ACL rule body that, after the protocol token, has no source/destination
-# restriction at all (matches everything).
-PERMISSIVE_ACL_RE = re.compile(
-    r"^(?:ip)?\s*(?:source\s+any\s+)?(?:destination\s+any\s?)?$"
 )
 
 
@@ -84,6 +85,9 @@ class ComplianceChecker:
         zones = config.get("zones", [])
         routes = config.get("routes", [])
         interfaces = config.get("interfaces", [])
+        nat = config.get("nat", {})
+        ntp = config.get("ntp", {})
+        log_source = config.get("log_source", {})
 
         # 1. weak password / authentication
         if global_cfg.get("telnet_enabled"):
@@ -101,15 +105,17 @@ class ComplianceChecker:
                     "simple 类型口令在配置中以明文存储，存在泄露风险。",
                     "改用 cipher 或 irreversible-cipher 类型存储口令。",
                 ))
-            if u.get("password_cipher") and any(
-                tok in (u.get("password_cipher") or "") for tok in WEAK_PASSWORD_TOKENS
-            ):
-                risks.append(self._risk(
-                    "high", "auth",
-                    f"用户 {u.get('name')} 使用弱口令/默认口令",
-                    f"检测到常见弱口令特征: {u.get('password_cipher')[:24]}",
-                    "立即更换为高复杂度口令，并启用口令复杂度策略。",
-                ))
+                # Only check weak tokens on simple-type (plaintext) passwords.
+                # cipher values are encrypted; substring matching would be
+                # meaningless and produce false positives.
+                pw_val = u.get("password_cipher") or ""
+                if any(tok in pw_val for tok in WEAK_PASSWORD_TOKENS):
+                    risks.append(self._risk(
+                        "high", "auth",
+                        f"用户 {u.get('name')} 使用弱口令/默认口令",
+                        f"检测到常见弱口令特征: {pw_val[:24]}",
+                        "立即更换为高复杂度口令，并启用口令复杂度策略。",
+                    ))
             if u.get("privilege") == "15" and u.get("services") and any(
                 s in ("telnet", "ftp", "http") for s in u["services"]
             ):
@@ -121,17 +127,31 @@ class ComplianceChecker:
                 ))
 
         # 2. high-risk open services on interfaces
+        # Identify management-zone interfaces (trust or management) so we can
+        # flag management services on non-management (data-plane) interfaces.
+        mgmt_zones = {"trust", "management", "mgmt", "dmz"}
         for iface in interfaces:
+            iface_zone = (iface.get("zone") or "").lower()
+            is_mgmt_iface = iface_zone in mgmt_zones or not iface_zone
             for sm in iface.get("service_manage", []):
                 svc = sm.get("service", "").lower()
                 if sm.get("action") == "permit" and svc in HIGH_RISK_SERVICES:
                     info = HIGH_RISK_SERVICES[svc]
-                    risks.append(self._risk(
-                        info["severity"], "open_port",
-                        f"接口 {iface['name']} 开放高危服务 {svc} (端口 {info['port']})",
-                        f"service-manage permit {svc} 直接放行该服务流量。",
-                        f"关闭 {svc} 服务或限制到受信任管理网段。",
-                    ))
+                    if is_mgmt_iface:
+                        risks.append(self._risk(
+                            info["severity"], "open_port",
+                            f"接口 {iface['name']} 开放高危服务 {svc} (端口 {info['port']})",
+                            f"service-manage permit {svc} 直接放行该服务流量。",
+                            f"关闭 {svc} 服务或限制到受信任管理网段。",
+                        ))
+                    else:
+                        risks.append(self._risk(
+                            "high", "open_port",
+                            f"数据面接口 {iface['name']} (zone={iface.get('zone','?')}) 开放管理服务 {svc}",
+                            f"在非管理区域接口上开放 {svc}，管理面暴露在数据面，"
+                            f"存在被绕过策略直接攻击的风险。",
+                            f"立即在数据面接口上禁用 {svc} 的 service-manage permit。",
+                        ))
 
         # 3. permissive ACLs
         for acl in acls:
@@ -146,10 +166,28 @@ class ComplianceChecker:
                         "收紧规则，明确指定源/目的地址段与服务端口。",
                     ))
 
-        # 3b. permissive security-policy
+        # 3b. permissive security-policy (no address/service constraint)
         for p in policies:
             if p.get("action") == "permit":
-                if not p.get("source_address") and not p.get("dest_address") and not p.get("service"):
+                has_src_addr = bool(p.get("source_address"))
+                has_dst_addr = bool(p.get("dest_address"))
+                has_service = bool(p.get("service"))
+                src_zone = (p.get("source_zone") or "").lower()
+                dst_zone = (p.get("dest_zone") or "").lower()
+                # any-any permit with no address/service constraint
+                is_any_any = (
+                    (src_zone in ("any", "") or not src_zone)
+                    and (dst_zone in ("any", "") or not dst_zone)
+                )
+                if is_any_any and not has_src_addr and not has_dst_addr and not has_service:
+                    risks.append(self._risk(
+                        "high", "policy",
+                        f"安全策略 {p['name']} 为 any-any 全放行",
+                        f"src={src_zone or 'any'} dst={dst_zone or 'any'} action=permit "
+                        f"(无地址/服务约束) -> 等价于放行所有跨域流量",
+                        "在放行策略中限定源/目的地址范围与服务，遵循最小授权原则。",
+                    ))
+                elif not has_src_addr and not has_dst_addr and not has_service:
                     risks.append(self._risk(
                         "high", "policy",
                         f"安全策略 {p['name']} 放行未限制地址/服务",
@@ -189,6 +227,63 @@ class ComplianceChecker:
                 "根据网络拓扑配置必要的静态/默认路由。",
             ))
 
+        # 5. operational security posture (firewall-specific deep checks)
+
+        # 5a. firewall log source disabled — critical for SIEM/audit
+        if log_source.get("disabled"):
+            risks.append(self._risk(
+                "high", "log_source",
+                "firewall log source 已被关闭 (undo firewall log source)",
+                "会话日志源被关闭后，防火墙无法向日志服务器发送会话/流量日志，"
+                "安全事件将无法在 SIEM 中追溯。",
+                "重新启用 firewall log source，确保会话日志可外发至日志服务器。",
+            ))
+        elif not log_source.get("enabled"):
+            missing.append(self._missing(
+                "high", "未配置 firewall log source",
+                "会话日志源未配置，防火墙会话日志将无法外发。",
+                "配置 firewall log source 指定日志发送接口/VRF。",
+            ))
+
+        # 5b. NTP disabled — affects log timestamp correlation
+        if ntp.get("disabled"):
+            risks.append(self._risk(
+                "medium", "ntp",
+                "NTP 时间同步已被禁用",
+                "NTP 禁用后设备时间可能漂移，导致日志时间戳不一致，"
+                "影响跨设备安全事件关联分析。",
+                "启用 NTP 并指向受信任的内部 NTP 服务器。",
+            ))
+        elif not ntp.get("enabled"):
+            missing.append(self._missing(
+                "medium", "未配置 NTP 时间同步",
+                "未配置 NTP 服务器，设备时间可能漂移。",
+                "配置 NTP 并指向受信任的内部时间服务器。",
+            ))
+
+        # 5c. NAT server (DNAT) exposure — external access to internal servers
+        nat_servers = nat.get("nat_servers", [])
+        if nat_servers:
+            for ns in nat_servers:
+                risks.append(self._risk(
+                    "medium", "nat_server",
+                    f"NAT server {ns['name']} 将外部 {ns['global_ip']}:{ns['global_port'] or 'any'} "
+                    f"映射到内部 {ns['inside_ip']}:{ns['inside_port'] or 'any'} ({ns['protocol']})",
+                    f"zone={ns['zone'] or '?'} — 端口映射将内部服务器暴露在外部访问下。",
+                    "确认映射必要性，限制源 IP 范围，并确保内部服务器已加固。",
+                ))
+
+        # 5d. default route 0.0.0.0/0 — informational
+        default_routes = [r for r in routes if r.get("dest") == "0.0.0.0"]
+        if default_routes:
+            for r in default_routes:
+                risks.append(self._risk(
+                    "low", "route",
+                    f"默认路由 0.0.0.0/0 指向 {r.get('next_hop','?')}",
+                    "默认路由将所有未知目的流量导向指定下一跳，需确认其指向受信任网关。",
+                    "确认默认路由下一跳的安全性与可达性。",
+                ))
+
         return self._finalize(risks, missing)
 
     # ------------------------------------------------------------------
@@ -223,15 +318,15 @@ class ComplianceChecker:
                     "simple 口令以明文存储在配置中。",
                     "改用 cipher/irreversible-cipher。",
                 ))
-            if u.get("password_cipher") and any(
-                tok in (u.get("password_cipher") or "") for tok in WEAK_PASSWORD_TOKENS
-            ):
-                risks.append(self._risk(
-                    "high", "auth",
-                    f"用户 {u.get('name')} 使用弱口令/默认口令",
-                    f"特征: {u.get('password_cipher')[:24]}",
-                    "更换为高复杂度口令。",
-                ))
+                # Only check weak tokens on simple-type (plaintext) passwords.
+                pw_val = u.get("password_cipher") or ""
+                if any(tok in pw_val for tok in WEAK_PASSWORD_TOKENS):
+                    risks.append(self._risk(
+                        "high", "auth",
+                        f"用户 {u.get('name')} 使用弱口令/默认口令",
+                        f"特征: {pw_val[:24]}",
+                        "更换为高复杂度口令。",
+                    ))
 
         # 2. high-risk open services (global)
         for svc, info in HIGH_RISK_SERVICES.items():

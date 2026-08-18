@@ -8,10 +8,11 @@ A *device result* is expected to be a dict shaped as::
 
     {
         "source": <file path>,
-        "device_type": "firewall" | "switch" | "log",
+        "device_type": "firewall" | "switch" | "log" | "traffic_log",
         "hostname": <str>,
         "config": <parsed config dict or None>,
         "log": <parsed log dict or None>,
+        "traffic": <traffic analysis dict or None>,
         "compliance": <checker result dict or None>,
     }
 """
@@ -52,6 +53,16 @@ def _sort_risks(risks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _fmt_counter(d: dict[str, Any] | None, top_n: int = 10) -> str:
+    """Format a Counter dict as aligned lines for text output."""
+    if not d:
+        return "    (无)"
+    items = sorted(d.items(), key=lambda x: -x[1])[:top_n]
+    max_key = max(len(str(k)) for k, _ in items)
+    lines = [f"    {str(k):<{max_key}} : {v}" for k, v in items]
+    return "\n".join(lines)
+
+
 class ReportGenerator:
     """Render device and batch analysis reports."""
 
@@ -71,6 +82,7 @@ class ReportGenerator:
 
         cfg = result.get("config")
         log = result.get("log")
+        traffic = result.get("traffic")
         comp = result.get("compliance")
 
         if cfg is not None:
@@ -87,9 +99,15 @@ class ReportGenerator:
 
         if log is not None:
             out.append("-" * 78)
-            out.append("三、日志事件统计")
+            out.append("三、系统日志事件统计")
             out.append("-" * 78)
             out.append(self._log_text(log))
+
+        if traffic is not None:
+            out.append("-" * 78)
+            out.append("四、流量/会话日志分析")
+            out.append("-" * 78)
+            out.append(self._traffic_text(traffic))
 
         out.append("=" * 78)
         out.append("报告结束")
@@ -107,17 +125,27 @@ class ReportGenerator:
                 f"{len(cfg.get('nat', {}).get('address_groups', []))} / "
                 f"{len(cfg.get('nat', {}).get('policies', []))}"
             )
+            lines.append(f"  NAT Server(DNAT)  : {len(cfg.get('nat', {}).get('nat_servers', []))}")
             lines.append(f"  ACL 数量          : {len(cfg.get('acls', []))}")
             lines.append(f"  接口数量          : {len(cfg.get('interfaces', []))}")
             lines.append(f"  静态路由数量      : {len(cfg.get('routes', []))}")
             lines.append(f"  AAA 本地用户      : {len(cfg.get('aaa_users', []))}")
+            ls = cfg.get("log_source", {})
+            lines.append(
+                f"  日志源(log source): enabled={ls.get('enabled')} "
+                f"disabled={ls.get('disabled')}"
+            )
+            ntp = cfg.get("ntp", {})
+            lines.append(
+                f"  NTP              : enabled={ntp.get('enabled')} "
+                f"servers={ntp.get('servers', [])}"
+            )
             g = cfg.get("global", {})
             lines.append(
                 f"  全局: telnet={g.get('telnet_enabled')} "
                 f"ssh={g.get('ssh_enabled')} "
                 f"log_audit={g.get('log_audit_enabled')}"
             )
-            # list interfaces briefly
             lines.append("")
             lines.append("  接口列表:")
             for iface in cfg.get("interfaces", []):
@@ -234,6 +262,87 @@ class ReportGenerator:
                 lines.append(f"    ... 其余 {len(crit)-20} 条已省略")
         return "\n".join(lines)
 
+    def _traffic_text(self, tr: dict[str, Any]) -> str:
+        lines: list[str] = []
+        total = tr.get("total_sessions", 0)
+        if total == 0:
+            lines.append(f"  会话总数          : 0")
+            err = tr.get("error")
+            if err:
+                lines.append(f"  错误              : {err}")
+            return "\n".join(lines)
+
+        tr_range = tr.get("time_range", {})
+        lines.append(f"  会话总数          : {total:,}")
+        lines.append(
+            f"  时间范围          : {tr_range.get('start', '-')} ~ "
+            f"{tr_range.get('end', '-')}"
+        )
+
+        # IP classification summary
+        sc = tr.get("src_ip_classes", {})
+        dc = tr.get("dst_ip_classes", {})
+        lines.append(
+            f"  源IP分类          : " +
+            ", ".join(f"{k}={v}" for k, v in sorted(sc.items(), key=lambda x: -x[1]))
+        )
+        lines.append(
+            f"  目的IP分类        : " +
+            ", ".join(f"{k}={v}" for k, v in sorted(dc.items(), key=lambda x: -x[1]))
+        )
+
+        # Outbound summary
+        ob = tr.get("outbound", {})
+        lines.append("")
+        lines.append(f"  [出向流量 内网->公网]  共 {ob.get('total',0):,} 条")
+        if ob.get("top_sources"):
+            lines.append("    Top 源IP:")
+            lines.append(_fmt_counter(ob["top_sources"]))
+        if ob.get("top_destinations"):
+            lines.append("    Top 目的IP:")
+            lines.append(_fmt_counter(ob["top_destinations"]))
+        if ob.get("top_protocols"):
+            lines.append("    Top 协议:")
+            lines.append(_fmt_counter(ob["top_protocols"]))
+
+        # Inbound summary
+        ib = tr.get("inbound", {})
+        lines.append("")
+        lines.append(f"  [入向流量 公网->内网]  共 {ib.get('total',0):,} 条")
+        if ib.get("top_sources"):
+            lines.append("    Top 源IP:")
+            lines.append(_fmt_counter(ib["top_sources"]))
+        if ib.get("top_destinations"):
+            lines.append("    Top 目的IP:")
+            lines.append(_fmt_counter(ib["top_destinations"]))
+        if ib.get("top_protocols"):
+            lines.append("    Top 协议:")
+            lines.append(_fmt_counter(ib["top_protocols"]))
+
+        # Protocol distribution
+        bp = tr.get("by_protocol", {})
+        if bp:
+            lines.append("")
+            lines.append("  [协议分布]")
+            lines.append(_fmt_counter(bp))
+
+        # Internal cross-zone (lateral movement)
+        xz = tr.get("internal_crosszone", {})
+        if xz:
+            lines.append("")
+            lines.append(f"  [内网跨域流量 (横向移动迹象)]  共 {len(xz)} 组")
+            lines.append(_fmt_counter(xz))
+
+        # Dual-interface IPs
+        di = tr.get("dual_interface_ips", {})
+        if di:
+            lines.append("")
+            lines.append(f"  [双接口IP (同IP多接口)]  共 {len(di)} 个")
+            for ip, ifaces in list(di.items())[:10]:
+                lines.append(f"    {ip:20} -> {', '.join(ifaces)}")
+
+        return "\n".join(lines)
+
     def render_batch_text(self, results: list[dict[str, Any]]) -> str:
         out: list[str] = []
         out.append("=" * 78)
@@ -270,7 +379,7 @@ class ReportGenerator:
             if comp:
                 s = comp.get("summary", {})
                 out.append(
-                    f"  [{r['device_type']:8}] {r.get('hostname','-'):16} "
+                    f"  [{r['device_type']:12}] {r.get('hostname','-'):16} "
                     f"score={comp.get('compliance_score',0):>3} "
                     f"H/M/L={s.get('high',0)}/{s.get('medium',0)}/{s.get('low',0)} "
                     f"miss={s.get('missing',0)}  <- {r.get('source','-')}"
@@ -278,13 +387,21 @@ class ReportGenerator:
             elif r.get("device_type") == "log":
                 log = r.get("log", {})
                 out.append(
-                    f"  [{'log':8}] {r.get('hostname','-'):16} "
+                    f"  [{'log':12}] {r.get('hostname','-'):16} "
                     f"events={log.get('total_events',0)} "
                     f"critical={len(log.get('critical_events',[]))}  <- {r.get('source','-')}"
                 )
+            elif r.get("device_type") == "traffic_log":
+                tr = r.get("traffic", {})
+                out.append(
+                    f"  [{'traffic':12}] {r.get('hostname','-'):16} "
+                    f"sessions={tr.get('total_sessions',0):,} "
+                    f"outbound={tr.get('outbound',{}).get('total',0):,} "
+                    f"inbound={tr.get('inbound',{}).get('total',0):,}  <- {r.get('source','-')}"
+                )
             else:
                 out.append(
-                    f"  [{r['device_type']:8}] {r.get('hostname','-'):16}  <- {r.get('source','-')}"
+                    f"  [{r['device_type']:12}] {r.get('hostname','-'):16}  <- {r.get('source','-')}"
                 )
         out.append("")
         out.append("详见各设备单独报告文件。")
@@ -347,6 +464,17 @@ class ReportGenerator:
                     f"<td>critical={len(log.get('critical_events',[]))}</td>"
                     f"<td>{html.escape(r.get('source','-'))}</td></tr>"
                 )
+            elif r.get("device_type") == "traffic_log":
+                tr = r.get("traffic", {})
+                parts.append(
+                    f"<tr><td>traffic_log</td>"
+                    f"<td>{html.escape(str(r.get('hostname','-')))}</td>"
+                    f"<td>-</td>"
+                    f"<td colspan='2'>sessions={tr.get('total_sessions',0):,} "
+                    f"out={tr.get('outbound',{}).get('total',0):,}/"
+                    f"in={tr.get('inbound',{}).get('total',0):,}</td>"
+                    f"<td>{html.escape(r.get('source','-'))}</td></tr>"
+                )
             else:
                 parts.append(
                     f"<tr><td>{html.escape(r['device_type'])}</td>"
@@ -375,6 +503,7 @@ class ReportGenerator:
         cfg = result.get("config")
         comp = result.get("compliance")
         log = result.get("log")
+        traffic = result.get("traffic")
 
         if cfg is not None:
             parts.append('<h3>一、配置概览</h3>')
@@ -383,8 +512,11 @@ class ReportGenerator:
             parts.append('<h3>二、安全合规性评估</h3>')
             parts.append(self._compliance_html(comp))
         if log is not None:
-            parts.append('<h3>三、日志事件统计</h3>')
+            parts.append('<h3>三、系统日志事件统计</h3>')
             parts.append(self._log_html(log))
+        if traffic is not None:
+            parts.append('<h3>四、流量/会话日志分析</h3>')
+            parts.append(self._traffic_html(traffic))
         parts.append("</div>")
         return "\n".join(parts)
 
@@ -399,10 +531,15 @@ class ReportGenerator:
                 f"{len(cfg.get('nat',{}).get('address_groups',[]))} / "
                 f"{len(cfg.get('nat',{}).get('policies',[]))}",
             ))
+            rows.append(("NAT Server(DNAT)", str(len(cfg.get('nat',{}).get('nat_servers',[])))))
             rows.append(("ACL 数量", str(len(cfg.get("acls", [])))))
             rows.append(("接口数量", str(len(cfg.get("interfaces", [])))))
             rows.append(("静态路由数量", str(len(cfg.get("routes", [])))))
             rows.append(("AAA 本地用户", str(len(cfg.get("aaa_users", [])))))
+            ls = cfg.get("log_source", {})
+            rows.append(("日志源(log source)", f"enabled={ls.get('enabled')} disabled={ls.get('disabled')}"))
+            ntp = cfg.get("ntp", {})
+            rows.append(("NTP", f"enabled={ntp.get('enabled')} servers={ntp.get('servers',[])}"))
         elif dt == "switch":
             rows.append(("VLAN 数量", str(len(cfg.get("vlans", [])))))
             rows.append(("VLANIF 接口", str(len(cfg.get("vlanifs", [])))))
@@ -528,6 +665,95 @@ class ReportGenerator:
                 out.append(f'<p>仅展示前 50 条，共 {len(crit)} 条。</p>')
         return "\n".join(out)
 
+    def _traffic_html(self, tr: dict[str, Any]) -> str:
+        total = tr.get("total_sessions", 0)
+        out: list[str] = []
+        if total == 0:
+            out.append(f'<p>会话总数: <b>0</b></p>')
+            err = tr.get("error")
+            if err:
+                out.append(f'<p class="meta">{html.escape(str(err))}</p>')
+            return "\n".join(out)
+
+        tr_range = tr.get("time_range", {})
+        out.append(
+            f'<p>会话总数: <b>{total:,}</b> '
+            f'| 时间范围: {html.escape(str(tr_range.get("start","-")))} ~ '
+            f'{html.escape(str(tr_range.get("end","-")))}</p>'
+        )
+
+        # IP classification
+        sc = tr.get("src_ip_classes", {})
+        dc = tr.get("dst_ip_classes", {})
+        out.append('<div class="grid2">')
+        out.append('<div><h4>源IP分类</h4><table class="kv">')
+        for k, v in sorted(sc.items(), key=lambda x: -x[1]):
+            out.append(f'<tr><th>{html.escape(k)}</th><td>{v:,}</td></tr>')
+        out.append("</table></div>")
+        out.append('<div><h4>目的IP分类</h4><table class="kv">')
+        for k, v in sorted(dc.items(), key=lambda x: -x[1]):
+            out.append(f'<tr><th>{html.escape(k)}</th><td>{v:,}</td></tr>')
+        out.append("</table></div></div>")
+
+        # Outbound
+        ob = tr.get("outbound", {})
+        out.append(f'<h4>出向流量 内网->公网 ({ob.get("total",0):,} 条)</h4>')
+        if ob.get("total", 0) > 0:
+            out.append('<div class="grid3">')
+            out.append('<div><h5>Top 源IP</h5><table class="kv">')
+            for ip, n in list(ob.get("top_sources", {}).items())[:10]:
+                out.append(f'<tr><th>{html.escape(ip)}</th><td>{n:,}</td></tr>')
+            out.append("</table></div>")
+            out.append('<div><h5>Top 目的IP</h5><table class="kv">')
+            for ip, n in list(ob.get("top_destinations", {}).items())[:10]:
+                out.append(f'<tr><th>{html.escape(ip)}</th><td>{n:,}</td></tr>')
+            out.append("</table></div>")
+            out.append('<div><h5>Top 协议</h5><table class="kv">')
+            for proto, n in list(ob.get("top_protocols", {}).items())[:10]:
+                out.append(f'<tr><th>{html.escape(proto)}</th><td>{n:,}</td></tr>')
+            out.append("</table></div></div>")
+
+        # Inbound
+        ib = tr.get("inbound", {})
+        out.append(f'<h4>入向流量 公网->内网 ({ib.get("total",0):,} 条)</h4>')
+        if ib.get("total", 0) > 0:
+            out.append('<div class="grid3">')
+            out.append('<div><h5>Top 源IP</h5><table class="kv">')
+            for ip, n in list(ib.get("top_sources", {}).items())[:10]:
+                out.append(f'<tr><th>{html.escape(ip)}</th><td>{n:,}</td></tr>')
+            out.append("</table></div>")
+            out.append('<div><h5>Top 目的IP</h5><table class="kv">')
+            for ip, n in list(ib.get("top_destinations", {}).items())[:10]:
+                out.append(f'<tr><th>{html.escape(ip)}</th><td>{n:,}</td></tr>')
+            out.append("</table></div>")
+            out.append('<div><h5>Top 协议</h5><table class="kv">')
+            for proto, n in list(ib.get("top_protocols", {}).items())[:10]:
+                out.append(f'<tr><th>{html.escape(proto)}</th><td>{n:,}</td></tr>')
+            out.append("</table></div></div>")
+
+        # Internal cross-zone
+        xz = tr.get("internal_crosszone", {})
+        if xz:
+            out.append(f"<h4>内网跨域流量 (横向移动迹象) — {len(xz)} 组</h4>")
+            out.append('<table class="risk"><tr><th>路径</th><th>会话数</th></tr>')
+            for path, n in list(xz.items())[:15]:
+                out.append(f'<tr><td>{html.escape(path)}</td><td>{n:,}</td></tr>')
+            out.append("</table>")
+
+        # Dual-interface IPs
+        di = tr.get("dual_interface_ips", {})
+        if di:
+            out.append(f"<h4>双接口IP (同IP多接口) — {len(di)} 个</h4>")
+            out.append('<table class="risk"><tr><th>IP</th><th>接口列表</th></tr>')
+            for ip, ifaces in list(di.items())[:15]:
+                out.append(
+                    f'<tr><td>{html.escape(ip)}</td>'
+                    f'<td>{html.escape(", ".join(ifaces))}</td></tr>'
+                )
+            out.append("</table>")
+
+        return "\n".join(out)
+
     @staticmethod
     def _html_wrap(title: str, body: str) -> str:
         return f"""<!DOCTYPE html>
@@ -541,6 +767,7 @@ class ReportGenerator:
   h2 {{ color: #0d47a1; margin-top: 0; }}
   h3 {{ color: #1565c0; border-left: 4px solid #1565c0; padding-left: 8px; margin-top: 24px; }}
   h4 {{ color: #37474f; margin-bottom: 6px; }}
+  h5 {{ color: #546e7a; margin-bottom: 4px; font-size: 14px; }}
   .card {{ background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 18px 22px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }}
   .meta {{ color: #666; font-size: 13px; }}
   .badge {{ background: #1565c0; color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 10px; vertical-align: middle; }}
@@ -557,6 +784,7 @@ class ReportGenerator:
   .score-band {{ font-size: 14px; }}
   .ok {{ color: #2e7d32; font-style: italic; }}
   .grid2 {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
+  .grid3 {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }}
   code {{ background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 12px; }}
 </style>
 </head>
