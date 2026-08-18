@@ -1,0 +1,64 @@
+sysname SW-Core-01
+#
+vlan batch 10 20 30 100
+#
+vlan 10
+ description Office-Users
+vlan 20
+ description Voice
+vlan 30
+ description Guest
+vlan 100
+ description Management
+#
+interface Vlanif100
+ ip address 192.168.100.1 255.255.255.0
+#
+interface GigabitEthernet0/0/1
+ port link-type access
+ port default vlan 10
+ stp edged-port enable
+#
+interface GigabitEthernet0/0/2
+ port link-type access
+ port default vlan 10
+#
+interface GigabitEthernet0/0/3
+ port link-type access
+ port default vlan 20
+#
+interface GigabitEthernet0/0/24
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 100
+#
+interface GigabitEthernet0/0/25
+ port link-type trunk
+ port trunk allow-pass vlan 100
+#
+acl number 3000
+ rule 5 permit ip source 192.168.10.0 0.0.0.255
+ rule 10 permit ip
+#
+acl number 3001
+ rule 5 deny ip source 192.168.30.0 0.0.0.255 destination 192.168.100.0 0.0.0.255
+#
+traffic-filter vlan 30 inbound acl 3001
+#
+stp mode mstp
+ stp enable
+ stp root primary
+#
+telnet server enable
+ssh server enable
+#
+ip route-static 0.0.0.0 0.0.0.0 192.168.100.254
+#
+aaa
+ local-user admin password cipher Admin@huawei
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh http
+ local-user guest password simple guest
+ local-user guest privilege level 1
+ local-user guest service-type telnet
+#
+return

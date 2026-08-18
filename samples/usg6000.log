@@ -1,0 +1,18 @@
+2024-01-15 09:15:23 USG6000V1 %%01SEC/4/LOGINFAIL:Login failed for user admin from 10.1.1.50
+2024-01-15 09:16:01 USG6000V1 %%01SEC/4/LOGINFAIL:Login failed for user admin from 10.1.1.50
+2024-01-15 09:16:45 USG6000V1 %%01SEC/4/LOGINFAIL:Login failed for user admin from 10.1.1.50
+2024-01-15 09:17:30 USG6000V1 %%01SEC/4/LOGINFAIL:Login failed for user root from 10.1.1.50
+2024-01-15 09:18:02 USG6000V1 %%01AAA/4/LOGINFAIL:User admin login through SSH from 10.1.1.50 fail
+2024-01-15 10:02:11 USG6000V1 %%01AAA/5/PRIVILEGE:User admin privilege level changed to 15 by manager
+2024-01-15 10:05:33 USG6000V1 %%01CFG/6/CONFIG:Configure the file by user admin through SSH.
+2024-01-15 10:06:12 USG6000V1 %%01CFG/6/CONFIG:Configure security-policy by user admin.
+2024-01-15 10:30:00 USG6000V1 %%01IFNET/5/STATE:Interface GigabitEthernet1/0/0 change state to down
+2024-01-15 10:30:05 USG6000V1 %%01IFNET/4/STATE:Interface GigabitEthernet1/0/1 physical state down
+2024-01-15 10:31:00 USG6000V1 %%01IFNET/5/STATE:Interface GigabitEthernet1/0/0 change state to up
+2024-01-15 11:12:45 USG6000V1 %%01SEC/2/ATK:Attack detected: SYN flood from 198.51.100.23
+2024-01-15 11:13:00 USG6000V1 %%01SEC/2/ATTACK:DDoS attack detected from 198.51.100.23 target 200.1.1.2
+2024-01-15 11:45:00 USG6000V1 %%01SEC/3/SCAN:Port scan detected from 203.0.113.5
+2024-01-15 12:00:00 USG6000V1 %%01INFO/6/SYSINFO:System running normally.
+2024-01-15 13:20:11 USG6000V1 %%01SSH/6/LOGIN:User admin login through SSH succeed from 10.1.1.10
+2024-01-15 14:05:22 USG6000V1 %%01CFG/6/CONFIG:Save configuration by user admin.
+2024-01-15 23:59:59 USG6000V1 %%01INFO/6/SYSINFO:End of day summary generated.

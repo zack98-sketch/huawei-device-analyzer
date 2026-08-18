@@ -1,0 +1,7 @@
+日期,时间,主机名,模块,级别,助记符,信息
+2024-02-20,08:15:32,CORE-SW-01,IFNET,提示,STATE,接口GigabitEthernet1/0/2状态变化为Down
+2024-02-20,08:16:05,CORE-SW-01,IFNET,提示,STATE,接口GigabitEthernet1/0/2链路状态恢复为Up
+2024-02-20,09:00:11,CORE-SW-01,AAA,警告,LOGINFAIL,用户admin通过SSH登录失败，源IP10.10.10.5
+2024-02-20,09:30:00,CORE-SW-01,SEC,关键,ATK,检测到来自203.0.113.20的ICMP扫描攻击
+2024-02-20,10:00:00,CORE-SW-01,CFG,信息,COMMIT,用户operator提交配置变更，已保存至启动配置
+2024-02-20,10:15:47,CORE-SW-01,AAA,提示,PRIVILEGE,用户engineer权限由3提升至15

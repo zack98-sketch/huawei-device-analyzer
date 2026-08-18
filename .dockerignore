@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.trae-html-share-packages/
+reports/
+web_jobs/
+samples/
+*.md
+*.zip
+Dockerfile
+.dockerignore

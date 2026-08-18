@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# 运行时生成的目录
+reports/
+web_jobs/
+.trae-html-share-packages/
+
+# 临时文件
+*.tmp
+*.bak
+*.swp
+*.zip
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>华为设备配置与日志分析工具</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1>华为防火墙 / 交换机 配置与日志分析平台</h1>
+    <p class="sub">批量上传配置文件与日志文件，自动识别设备类型并生成结构化安全分析报告。</p>
+  </header>
+
+  <main>
+    <!-- 1. Upload section -->
+    <section class="card" id="upload-card">
+      <h2>1. 上传文件</h2>
+      <form id="analyze-form">
+        <div id="dropzone" class="dropzone">
+          <div class="dz-inner">
+            <div class="dz-icon">⬆</div>
+            <div class="dz-text">将文件拖拽到此处，或<span class="link">点击选择</span></div>
+            <div class="dz-hint">支持 .cfg / .conf / .txt / .log / .csv，可一次选择多个文件</div>
+          </div>
+          <input type="file" id="file-input" multiple accept=".cfg,.conf,.txt,.log,.csv">
+        </div>
+
+        <div id="file-list" class="file-list hidden"></div>
+
+        <div class="options">
+          <div class="opt-row">
+            <label for="log-start">日志过滤起始时间</label>
+            <input type="text" id="log-start" placeholder="YYYY-MM-DD HH:MM:SS (可选)">
+          </div>
+          <div class="opt-row">
+            <label for="log-end">日志过滤结束时间</label>
+            <input type="text" id="log-end" placeholder="YYYY-MM-DD HH:MM:SS (可选)">
+          </div>
+        </div>
+
+        <div class="actions">
+          <button type="submit" id="analyze-btn" disabled>开始分析</button>
+          <span id="status-text" class="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <!-- 2. Results section (hidden until analysis done) -->
+    <section class="card hidden" id="results-card">
+      <h2>2. 分析结果</h2>
+
+      <div id="summary" class="summary"></div>
+
+      <div class="tabs" id="result-tabs"></div>
+
+      <div id="tab-content" class="tab-content">
+        <div class="report-viewer" id="report-viewer">
+          <div class="viewer-placeholder">选择上方标签查看对应设备的详细报告</div>
+        </div>
+        <div class="viewer-actions" id="viewer-actions" style="display:none">
+          <a id="view-html" class="btn" target="_blank">在浏览器打开 (HTML)</a>
+          <a id="download-txt" class="btn">下载 TXT</a>
+          <a id="download-html" class="btn" download>下载 HTML</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="card hidden" id="error-card">
+      <h2>错误</h2>
+      <pre id="error-detail"></pre>
+    </section>
+  </main>
+
+  <footer>
+    <span>华为设备分析工具 · 基于 Flask · 数据仅在本机处理</span>
+  </footer>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

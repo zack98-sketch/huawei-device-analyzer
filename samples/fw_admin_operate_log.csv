@@ -1,0 +1,18 @@
+时间	管理员	登录IP	内容	虚拟系统
+ 2026/08/18 14:58:28	 lsjf_admin	 10.64.32.182	 The user downloaded the file successfully on the web UI. (Ip=10.64.32.182,User=lsjf_admin,Vrf=public,FileName=sys_operate.csv)	 public
+ 2026/08/18 14:58:27	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getOperateLogListData	 public
+ 2026/08/18 14:58:18	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getOperateLogListData	 public
+ 2026/08/18 14:58:12	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getOperateLogListData	 public
+ 2026/08/18 14:58:07	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getOperateLogListData	 public
+ 2026/08/18 14:58:04	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getOnlineInformation	 public
+ 2026/08/18 14:58:02	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getTrafficReportSrcip	 public
+ 2026/08/18 14:57:54	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getOnlineInformation	 public
+ 2026/08/18 14:57:52	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getTrafficReportSrcip	 public
+ 2026/08/18 14:57:52	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:SetDefined defined_dashboard	 public
+ 2026/08/18 14:57:06	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:upgradeCenterList	 public
+ 2026/08/18 14:57:02	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getNat64Info	 public
+ 2026/08/18 14:57:02	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:getHrpState	 public
+ 2026/08/18 14:57:02	 lsjf_admin	 10.64.32.182	 Ip:10.64.32.182 user:lsjf_admin comm successfully:vsysEnableCheck	 public
+ 2026/08/18 14:57:02	 lsjf_admin	 10.64.32.182	 The user succeeded in logging in to WEB. (UserType=WEB, UserName=lsjf_admin, AuthenticationMethod="Already", RemoteIp=10.64.32.182, VpnName=_public_, LocalIp=127.0.0.1)	 public
+ 2026/08/18 14:57:02	 lsjf_admin	 10.64.32.182	 Recorded command information. (Task=WEB, RemoteIp=10.64.32.182, VpnName=_public_, User=lsjf_admin, AuthenticationMethod="Already", Command="display disk partition nlog", LocalIp=127.0.0.1.)	 public
+ 2026/08/18 14:57:02	 lsjf_admin	 10.64.32.182	 The user succeeded in logging out of WEB. (UserType=WEB, UserName=lsjf_admin, RemoteIp=10.64.32.182, VpnName=_public_, Reason=the terminal was closed, LocalIp=127.0.0.1)	 public
