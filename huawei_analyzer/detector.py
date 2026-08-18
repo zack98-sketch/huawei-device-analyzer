@@ -1,7 +1,15 @@
 """Device type auto-detection based on configuration features.
 
 Identifies whether a file is a Huawei firewall config, switch config,
-or device log file by scanning for characteristic keywords.
+VRP system log (plain-text or CSV export), or firewall session/traffic table
+CSV export, by scanning for characteristic keywords and column headers.
+
+Detection order (cheap first):
+  1. Traffic/session CSV — columns like 入接口/出接口/安全策略/开始时间/结束时间.
+  2. System log CSV — columns like 日期/时间/模块/级别/助记符.
+  3. Plain-text VRP log — lines matching ``%%MODULE/SEV/MNEMONIC``.
+  4. Firewall config keyword counting.
+  5. Switch config keyword counting.
 """
 
 from __future__ import annotations
@@ -44,8 +52,7 @@ LOG_LINE_RE = re.compile(
 DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}")
 
 # CSV column-name tokens that, when appearing on the header line, suggest a
-# structured Huawei log export (e.g. InfoCenter CSV export, exported from
-# eSight / web-based log viewer / admin operation log).
+# structured Huawei system log export (InfoCenter CSV, eSight, admin op log).
 CSV_LOG_COLUMNS = (
     # English
     "date", "time", "timestamp", "host", "hostname", "module",
@@ -57,19 +64,63 @@ CSV_LOG_COLUMNS = (
     "管理员", "用户", "登录ip", "登录地址", "虚拟系统",
 )
 
+# Column-name tokens that uniquely identify a traffic/session table export
+# (display session table). These columns do NOT appear in system logs or
+# admin operation logs.
+TRAFFIC_LOG_COLUMNS = (
+    "入接口", "出接口", "安全策略", "源安全区域", "目的安全区域",
+    "源地址", "目的地址", "源端口", "目的端口", "开始时间", "结束时间",
+    "input-interface", "output-interface", "source-zone",
+    "destination-zone", "source-address", "destination-address",
+    "start-time", "end-time",
+)
+
+
+def _detect_csv_delimiter(content: str) -> str | None:
+    """Return '\t' or ',' based on which is more common in the header."""
+    lines = [ln for ln in content.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+    first = lines[0]
+    tab_count = first.count("\t")
+    comma_count = first.count(",")
+    if tab_count < 2 and comma_count < 2:
+        return None
+    return "\t" if tab_count > comma_count else ","
+
+
+def _is_traffic_log_csv(content: str) -> bool:
+    """Return True if the CSV header matches a traffic/session table export.
+
+    A traffic log is identified when >= 4 traffic-log-specific column tokens
+    appear in the header row (e.g. 入接口 + 出接口 + 安全策略 + 源安全区域).
+    """
+    delimiter = _detect_csv_delimiter(content)
+    if not delimiter:
+        return False
+    try:
+        reader = csv.reader(io.StringIO(content), delimiter=delimiter)
+        rows = [r for r in reader if r and any(c.strip() for c in r)]
+    except csv.Error:
+        return False
+    if len(rows) < 2:
+        return False
+    header_cols = [c.strip().lower() for c in rows[0]]
+    hits = 0
+    for tok in TRAFFIC_LOG_COLUMNS:
+        t = tok.lower()
+        if any(t in h for h in header_cols):
+            hits += 1
+    return hits >= 4
+
 
 def _csv_looks_like_log(content: str) -> bool:
-    """Return True if the content looks like a CSV/TSV log export.
+    """Return True if the content looks like a system-log CSV/TSV export.
 
-    Heuristics applied in order (cheap ones first):
-      1. First non-empty line has >= 2 field separators (commas or tabs).
-      2. Header (first row) contains >= 2 known log column tokens (counts
-         distinct logical tokens so duplicate hits collapse).
-      3. >= 20% of subsequent rows contain timestamp evidence. Timestamp
-         evidence is either:
-         a) a single cell containing a combined YYYY-MM-DD HH:MM:SS value
-            (with ``-`` or ``/`` date separators),
-         b) a dedicated date col combined with a time col.
+    Heuristics:
+      1. >= 2 field separators (comma or tab) in the header.
+      2. Header contains >= 2 known system-log column tokens.
+      3. >= 20% of data rows contain timestamp evidence.
     """
     lines = content.splitlines()
     non_empty = [ln for ln in lines if ln.strip()]
@@ -80,7 +131,6 @@ def _csv_looks_like_log(content: str) -> bool:
     comma_count = header.count(",")
     if tab_count < 2 and comma_count < 2:
         return False
-    # Auto-detect delimiter
     delimiter = "\t" if tab_count > comma_count else ","
     try:
         reader = csv.reader(io.StringIO(content), delimiter=delimiter)
@@ -110,9 +160,6 @@ def _csv_looks_like_log(content: str) -> bool:
             date_idx = idx
         if time_idx is None and any(t in col for t in ("time", "时间")):
             time_idx = idx
-    # When a single column holds both date and time, "时间" matches both
-    # date_idx and time_idx — that's fine; the combined-ts regex below
-    # handles it.
     combined_ts_re = re.compile(r"\d{4}[-/]\d{2}[-/]\d{2}[\sT]\d{2}:\d{2}:\d{2}")
     date_only_re = re.compile(r"^\d{4}[-/]\d{2}[-/]\d{2}$")
     time_only_re = re.compile(r"^\d{2}:\d{2}(:\d{2})?$")
@@ -128,8 +175,6 @@ def _csv_looks_like_log(content: str) -> bool:
                     t = (row[time_idx] or "").strip()
                     if time_only_re.match(t):
                         return True
-                # A date-only cell still counts as timestamp evidence for
-                # detection (time defaulted to 00:00:00 during parse).
                 return True
         return False
 
@@ -138,34 +183,34 @@ def _csv_looks_like_log(content: str) -> bool:
 
 
 def detect_file_type(content: str) -> str:
-    """Return one of: 'firewall', 'switch', 'log', 'unknown'.
+    """Return one of: 'firewall', 'switch', 'log', 'traffic_log', 'unknown'.
 
     The detection scans the entire file content for characteristic tokens.
-    A file is classified as a log when a meaningful fraction of lines match
-    the VRP log header pattern; otherwise configuration keyword counts win.
-    Comma-separated CSV log exports are handled via a dedicated heuristic.
+    Traffic-log CSV is checked first (its column set is the most distinctive),
+    then system-log CSV, then plain-text VRP log patterns, and finally
+    configuration keyword counts.
     """
     if not content:
         return "unknown"
 
-    # CSV log detection: run first because CSV exports (especially with
-    # Chinese column headers) rarely match the plain-text line regexes.
+    # Traffic/session table CSV — most distinctive column set, check first.
+    if _is_traffic_log_csv(content):
+        return "traffic_log"
+
+    # System log CSV (admin op log, InfoCenter export, etc.)
     if _csv_looks_like_log(content):
         return "log"
 
     lines = content.splitlines()
     total_lines = len(lines) or 1
 
-    # Count VRP log-style lines.
+    # Plain-text VRP log lines.
     log_hits = sum(1 for ln in lines if LOG_LINE_RE.match(ln))
-    # A more lenient timestamped-line count, in case the %% module marker is
-    # missing (some export formats strip it).
     ts_hits = sum(1 for ln in lines if DATE_PREFIX_RE.match(ln))
 
     if log_hits >= 3 or (log_hits >= 1 and log_hits / total_lines >= 0.3):
         return "log"
     if ts_hits and ts_hits / total_lines >= 0.5 and log_hits == 0:
-        # Timestamped lines but no module markers -> still treat as log.
         return "log"
 
     # Configuration keyword counting.
@@ -177,7 +222,5 @@ def detect_file_type(content: str) -> str:
     if sw_hits > fw_hits and sw_hits > 0:
         return "switch"
     if fw_hits == sw_hits and fw_hits > 0:
-        # Ambiguous: default to firewall (firewall configs also frequently
-        # contain vlan/interface stanzas, but security-policy wins).
         return "firewall"
     return "unknown"

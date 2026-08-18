@@ -1,0 +1,27 @@
+虚拟系统,协议,安全策略,入接口,出接口,源安全区域,源地址,源端口,目的安全区域,目的地址,目的端口,开始时间,结束时间
+public,UDP(53),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.153,53211,untrust,8.8.8.8,53,2026/08/18 21:00:00,2026/08/18 21:00:02
+public,UDP(53),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.153,53212,untrust,114.114.114.114,53,2026/08/18 21:00:01,2026/08/18 21:00:03
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.83,42103,untrust,203.0.113.20,443,2026/08/18 21:00:05,2026/08/18 21:05:18
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.83,42104,untrust,203.0.113.21,443,2026/08/18 21:00:06,2026/08/18 21:06:22
+public,TCP(8080),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.210,33445,untrust,198.51.100.5,8080,2026/08/18 21:01:00,2026/08/18 21:10:30
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.210,33446,untrust,198.51.100.6,443,2026/08/18 21:01:01,2026/08/18 21:11:45
+public,UDP(53),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.237,41122,untrust,8.8.4.4,53,2026/08/18 21:02:00,2026/08/18 21:02:02
+public,TCP(22),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.80,22331,untrust,192.0.2.50,22,2026/08/18 21:03:00,2026/08/18 21:15:00
+public,UDP(53),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.153,53213,untrust,8.8.8.8,53,2026/08/18 21:03:01,2026/08/18 21:03:03
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.83,42105,untrust,203.0.113.22,443,2026/08/18 21:03:05,2026/08/18 21:08:18
+public,TCP(443),hufang,untrust,GigabitEthernet1/0/0,untrust,10.185.60.22,51230,trust,10.64.5.78,443,2026/08/18 21:05:00,2026/08/18 21:20:00
+public,TCP(443),hufang,untrust,GigabitEthernet1/0/0,untrust,10.185.60.22,51231,trust,10.64.5.79,443,2026/08/18 21:05:01,2026/08/18 21:20:01
+public,TCP(80),hufang,untrust,GigabitEthernet1/0/0,untrust,10.185.60.22,51232,trust,10.64.5.80,80,2026/08/18 21:05:02,2026/08/18 21:20:02
+public,TCP(443),hufang,untrust,GigabitEthernet1/0/0,untrust,10.185.60.23,51233,trust,10.64.5.78,443,2026/08/18 21:06:00,2026/08/18 21:21:00
+public,TCP(445),hufang,untrust,GigabitEthernet1/0/0,untrust,203.0.113.99,61234,trust,10.64.5.78,445,2026/08/18 21:07:00,2026/08/18 21:22:00
+public,TCP(3389),hufang,untrust,GigabitEthernet1/0/0,untrust,203.0.113.99,61235,trust,10.64.5.80,3389,2026/08/18 21:07:01,2026/08/18 21:22:01
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.83,42106,untrust,203.0.113.23,443,2026/08/18 21:10:00,2026/08/18 21:15:18
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.210,33447,untrust,198.51.100.7,443,2026/08/18 21:10:01,2026/08/18 21:20:45
+public,UDP(53),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.153,53214,untrust,114.114.114.114,53,2026/08/18 21:10:02,2026/08/18 21:10:04
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.83,42107,untrust,203.0.113.24,443,2026/08/18 21:15:00,2026/08/18 21:20:18
+public,TCP(8080),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.237,41123,untrust,198.51.100.8,8080,2026/08/18 21:16:00,2026/08/18 21:25:30
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.210,33448,untrust,198.51.100.9,443,2026/08/18 21:16:01,2026/08/18 21:26:45
+public,UDP(53),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.153,53215,untrust,8.8.8.8,53,2026/08/18 21:17:00,2026/08/18 21:17:02
+public,TCP(443),hufang,untrust,GigabitEthernet1/0/0,untrust,10.185.60.22,51234,trust,10.64.5.78,443,2026/08/18 21:18:00,2026/08/18 21:33:00
+public,ICMP(8),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.5.80,0,untrust,192.0.2.51,0,2026/08/18 21:19:00,2026/08/18 21:19:02
+public,TCP(443),to-i,GigabitEthernet1/0/0,GigabitEthernet1/0/1,trust,10.64.7.83,42108,untrust,203.0.113.25,443,2026/08/18 21:20:00,2026/08/18 21:25:18

@@ -1,8 +1,9 @@
 """Huawei firewall (USG / NGFW) configuration parser.
 
-Extracts: security zones, security policies, NAT policies & address groups,
-ACLs, interfaces, static routes, AAA users and a few global settings used by
-the compliance checker.
+Extracts: security zones, security policies (incl. any-any detection),
+NAT policies & address groups, NAT server (DNAT/port-forward) rules,
+ACLs, interfaces, static routes, AAA users, firewall-log-source settings,
+NTP configuration, and a few global flags used by the compliance checker.
 """
 
 from __future__ import annotations
@@ -32,6 +33,18 @@ _ACTION_RE = re.compile(
 _NAT_ADDR_GRP_RE = re.compile(r"^\s*nat\s+address-group\s+(\S+)\s+(\d+)\s*$")
 _NAT_SECTION_RE = re.compile(r"^\s+section\s+(\d+)\s+(\S+)\s+(\S+)\s*$")
 
+# nat server (DNAT / port-forward) rules:
+#   nat server <name> <id> zone <zone> protocol <tcp|udp> global <ip> <port> inside <ip> <port>
+_NAT_SERVER_RE = re.compile(
+    r"^\s*nat\s+server\s+(\S+)\s+(\d+)\s+"
+    r"(?:zone\s+(\S+)\s+)?"
+    r"protocol\s+(tcp|udp)\s+"
+    r"global\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+    r"(?:\s+(\d+))?\s+"
+    r"inside\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+    r"(?:\s+(\d+))?\s*$"
+)
+
 _ACL_HDR_RE = re.compile(r"^\s*acl\s+(?:number\s+)?(\d+)\s*$")
 _ACL_RULE_RE = re.compile(
     r"^\s+rule\s+(\d+)\s+(permit|deny)\s*"
@@ -51,12 +64,33 @@ _ROUTE_RE = re.compile(
     r"(?:\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}))?"
 )
 
+# firewall log source (where session/traffic logs are sent)
+_LOG_SOURCE_RE = re.compile(
+    r"^\s*firewall\s+log\s+source\s+(.+)$", re.MULTILINE
+)
+_LOG_SOURCE_UNDO_RE = re.compile(
+    r"^\s*undo\s+firewall\s+log\s+source\s*$", re.MULTILINE
+)
+
+# NTP configuration
+_NTP_DISABLE_RE = re.compile(
+    r"^\s*ntp-service\s+disable\s*$", re.MULTILINE
+)
+_NTP_IFACE_DISABLE_RE = re.compile(
+    r"^\s*ntp\s+server\s+source-interface\s+all\s+disable\s*$", re.MULTILINE
+)
+_NTP_SERVER_RE = re.compile(
+    r"^\s*ntp-service\s+(?:ipv4\s+)?server\s+(\S+)\s*$", re.MULTILINE
+)
+
 # AAA local-user parsing is delegated to the shared _common.extract_aaa_users
 # helper (handles both inline and block forms); no local regexes needed here.
 
 _TELNET_RE = re.compile(r"^\s*telnet\s+(?:server\s+)?enable", re.MULTILINE)
 _SSH_RE = re.compile(r"^\s*ssh\s+(?:server\s+)?(?:enable|user)", re.MULTILINE)
-_LOG_AUDIT_RE = re.compile(r"^\s*info-center\s+logbuffer\s+enable", re.MULTILINE | re.IGNORECASE)
+_LOG_AUDIT_RE = re.compile(
+    r"^\s*info-center\s+(?:logbuffer|channel|source)\s+enable", re.MULTILINE | re.IGNORECASE
+)
 
 
 class FirewallParser:
@@ -71,11 +105,13 @@ class FirewallParser:
             "hostname": self._extract_hostname(content),
             "zones": [],
             "security_policies": [],
-            "nat": {"address_groups": [], "policies": []},
+            "nat": {"address_groups": [], "policies": [], "nat_servers": []},
             "acls": [],
             "interfaces": [],
             "routes": [],
             "aaa_users": [],
+            "ntp": self._parse_ntp(content),
+            "log_source": self._parse_log_source(content),
             "global": {
                 "telnet_enabled": bool(_TELNET_RE.search(content)),
                 "ssh_enabled": bool(_SSH_RE.search(content)),
@@ -141,6 +177,22 @@ class FirewallParser:
                     i += 1
                 result["nat"]["address_groups"].append(grp)
                 continue
+
+            # nat server (DNAT / port-forward) — single-line command
+            m = _NAT_SERVER_RE.match(line)
+            if m:
+                result["nat"]["nat_servers"].append(
+                    {
+                        "name": m.group(1),
+                        "id": m.group(2),
+                        "zone": m.group(3) or "",
+                        "protocol": m.group(4),
+                        "global_ip": m.group(5),
+                        "global_port": m.group(6) or "",
+                        "inside_ip": m.group(7),
+                        "inside_port": m.group(8) or "",
+                    }
+                )
 
             # acl number <id>
             m = _ACL_HDR_RE.match(line)
@@ -221,6 +273,43 @@ class FirewallParser:
     def _extract_hostname(content: str) -> str:
         m = _HOSTNAME_RE.search(content)
         return m.group(1) if m else "unknown"
+
+    @staticmethod
+    def _parse_log_source(content: str) -> dict[str, Any]:
+        """Extract firewall log source configuration.
+
+        Returns a dict with:
+          - ``enabled``: bool — whether log source is configured (not undone).
+          - ``raw``: the raw `firewall log source ...` line, or None.
+          - ``disabled``: True if `undo firewall log source` was found.
+        """
+        disabled = bool(_LOG_SOURCE_UNDO_RE.search(content))
+        m = _LOG_SOURCE_RE.search(content)
+        return {
+            "enabled": bool(m) and not disabled,
+            "raw": m.group(1).strip() if m else None,
+            "disabled": disabled,
+        }
+
+    @staticmethod
+    def _parse_ntp(content: str) -> dict[str, Any]:
+        """Extract NTP configuration.
+
+        Returns a dict with:
+          - ``enabled``: bool — whether NTP is active.
+          - ``disabled``: True if explicitly disabled.
+          - ``servers``: list of NTP server addresses.
+        """
+        disabled = bool(
+            _NTP_DISABLE_RE.search(content)
+            or _NTP_IFACE_DISABLE_RE.search(content)
+        )
+        servers = _NTP_SERVER_RE.findall(content)
+        return {
+            "enabled": bool(servers) and not disabled,
+            "disabled": disabled,
+            "servers": servers,
+        }
 
     @staticmethod
     def _parse_rule(
