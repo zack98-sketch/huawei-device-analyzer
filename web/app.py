@@ -213,6 +213,71 @@ def api_batch(job, stem, fmt):
 
 
 # ---------------------------------------------------------------------------
+# Routes: product documentation (decompiled CHM)
+# ---------------------------------------------------------------------------
+# Drop the decompiled .chm output (HTML + assets) into this directory, or point
+# HUAWEI_ANALYZER_DOCS_DIR at it. The .chm is a compiled HTML Help binary; it
+# must be decompiled once (see /docs placeholder for the command).
+DOCS_DIR = Path(
+    os.environ.get("HUAWEI_ANALYZER_DOCS_DIR", _HERE / "docs_site")
+)
+_DOCS_INDEX_FILES = ("index.html", "index.htm", "default.html", "default.htm")
+
+
+@app.get("/docs")
+def docs_index():
+    """Serve the decompiled Huawei product documentation.
+
+    Returns the CHM entry page if found, otherwise a directory listing. When
+    the docs directory is absent, returns instructions for decompiling the
+    .chm so the page is self-explanatory.
+    """
+    if not DOCS_DIR.is_dir():
+        msg = (
+            "<!doctype html><meta charset='utf-8'>"
+            "<h2>产品文档未就绪</h2>"
+            "<p>请将 <code>.chm</code> 反编译后的 HTML 目录放入 "
+            "<code>web/docs_site/</code>（或设置环境变量 "
+            "<code>HUAWEI_ANALYZER_DOCS_DIR</code>）。</p>"
+            "<p>本机反编译示例（任选其一）：</p>"
+            "<pre>"
+            "# 7-Zip\n"
+            "7z x \"HiSecEngine USG6000F, USG6000G V600R025C10 产品文档.chm\" -oweb/docs_site\n\n"
+            "# Windows 自带 hh.exe\n"
+            "hh -decompile web/docs_site \"HiSecEngine USG6000F, USG6000G V600R025C10 产品文档.chm\"\n\n"
+            "# Linux/Mac (chmlib)\n"
+            "extract_chmlib \"HiSecEngine USG6000F, USG6000G V600R025C10 产品文档.chm\" web/docs_site\n"
+            "</pre>"
+        )
+        return msg, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    for cand in _DOCS_INDEX_FILES:
+        if (DOCS_DIR / cand).is_file():
+            return send_from_directory(DOCS_DIR, cand, mimetype="text/html")
+
+    # No index page -> render a directory listing so the user can navigate.
+    items = sorted(p.name for p in DOCS_DIR.iterdir())
+    rows = "".join(
+        f'<li><a href="/docs/{name}">{name}</a></li>' for name in items
+    )
+    return (
+        f"<!doctype html><meta charset='utf-8'>"
+        f"<h2>产品文档</h2><ul>{rows}</ul>",
+        200,
+        {"Content-Type": "text/html; charset=utf-8"},
+    )
+
+
+@app.get("/docs/<path:filename>")
+def docs_file(filename):
+    """Serve a single file (incl. subfolders) from the decompiled docs."""
+    if not DOCS_DIR.is_dir():
+        return ("文档目录不存在", 404)
+    # send_from_directory rejects ".." traversal and serves subpaths.
+    return send_from_directory(DOCS_DIR, filename)
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 def _analyze_one(path: Path, log_start, log_end, idx: int) -> dict[str, Any]:
